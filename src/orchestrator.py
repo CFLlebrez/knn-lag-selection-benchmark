@@ -21,6 +21,8 @@ from .tuner import tune_knn_k
 from .feature_selection import select_features
 from .evaluation import PredictiveEvaluator
 from .logger_setup import setup_framework_logger
+from .experiment_config import ForecastSpec, SplitSpec
+from .temporal_protocol import make_development_cv, make_temporal_holdout
 
 
 logger = setup_framework_logger(__name__)
@@ -85,6 +87,21 @@ def main():
 
     args = parser.parse_args()
 
+    if args.fh < 0:
+        parser.error("--fh must be zero or a positive forecast horizon")
+    if args.ph < 0:
+        parser.error("--ph must be zero or a positive look-back window")
+    if args.feature_selection and (
+        args.fs_n_features is None or args.fs_n_features < 1
+    ):
+        parser.error(
+            "--feature_selection requires a positive --fs_n_features value"
+        )
+    if args.evaluation and not args.feature_selection:
+        parser.error("--evaluation requires --feature_selection")
+    if args.alpha is not None and args.alpha <= 0:
+        parser.error("--alpha must be positive")
+
     # Reproducibility
     set_seed(args.seed)
 
@@ -129,11 +146,25 @@ def main():
             with open(time_meta_file, 'r') as f:
                 t_transform = json.load(f).get('t_transform', 0)
 
-    # --- TRAIN/TEST SPLIT (80/20 Temporal) ---
+    # --- DEVELOPMENT/TEST SPLIT (80/20 Temporal) ---
     df_full = pd.read_csv(transformed_file)
-    split_idx = int(len(df_full) * 0.8)
-    df_train_val = df_full.iloc[:split_idx]
-    df_test = df_full.iloc[split_idx:]
+    forecast_spec = (
+        ForecastSpec.direct(args.fh) if args.fh > 0 else ForecastSpec.immediate()
+    )
+    selection_target_col = (
+        f"{target_col}_t+{args.fh}" if args.fh > 0 else target_col
+    )
+    split_spec = SplitSpec(test_fraction=0.2, cv_splits=3)
+    holdout = make_temporal_holdout(df_full, forecast_spec, split_spec)
+    df_train_val = holdout.development
+    df_test = holdout.test
+    cv_gap = max(forecast_spec.steps)
+    logger.info(
+        "Temporal hold-out: %d development rows, %d purged rows, %d test rows",
+        len(df_train_val),
+        holdout.purged_rows,
+        len(df_test),
+    )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         train_csv = os.path.join(tmp_dir, "train.csv")
@@ -155,7 +186,11 @@ def main():
                 n_features=args.fs_n_features,
                 sklearn_method=args.sklearn_method,
                 weka_inspired_method=args.weka_inspired_method,
-                direction=args.seq_direction
+                direction=args.seq_direction,
+                alpha=args.alpha,
+                cv_gap=cv_gap,
+                seed=args.seed,
+                selection_target_col=selection_target_col,
             )
 
             # Clean parameters for the final selector
@@ -167,8 +202,12 @@ def main():
             redundant_params = ['sklearn_method', 'weka_inspired_method', 'n_neighbors', 
                                'alpha', 'direction']
             
-            if args.fs_method in ['pearson', 'mutual_info', 'ccf', 'rfe']:
+            if args.fs_method in ['pearson', 'ccf', 'rfe']:
                 for key in redundant_params:
+                    fs_kwargs.pop(key, None)
+
+            elif args.fs_method == 'mutual_info':
+                for key in ['sklearn_method', 'weka_inspired_method', 'alpha', 'direction']:
                     fs_kwargs.pop(key, None)
             
             elif args.fs_method == 'sequential':
@@ -176,6 +215,9 @@ def main():
                 # We remove the others
                 for key in ['sklearn_method', 'weka_inspired_method', 'alpha']:
                     fs_kwargs.pop(key, None)
+
+            if args.fs_method in ['lasso', 'elastic_net', 'sequential']:
+                fs_kwargs['cv'] = make_development_cv(forecast_spec, split_spec)
 
             logger.info(f"Running {args.fs_method}...")
             fs_results = select_features(
@@ -185,10 +227,13 @@ def main():
                 method=args.fs_method,
                 time_col=args.time_col,
                 n_features=args.fs_n_features,
+                selection_target_col=selection_target_col,
+                evaluation_target_cols=[selection_target_col],
                 **fs_kwargs
             )
             
             selected_features = fs_results['selected_features']
+            candidate_features = fs_results['candidate_features']
             json_path = fs_results['json_metadata_path']
             logger.info(f"Selected features: {len(selected_features)}")
 
@@ -197,20 +242,33 @@ def main():
             try:
                 logger.info(f"{args.evaluation_model.upper()} Arbiter Evaluation")
                 method_label = f"weka_{args.weka_inspired_method}" if args.fs_method == 'weka_inspired' else args.fs_method
-                df_num = df_test.select_dtypes(include=[np.number])
+                # Downstream-model tuning belongs exclusively to development data.
+                df_num = df_train_val.select_dtypes(include=[np.number])
                 
                 with open(json_path, 'r') as f:
                     meta = json.load(f)
                 
                 target_cols = meta['target_columns']
-                all_features = [c for c in df_num.columns if c not in target_cols]
+                all_features = [c for c in candidate_features if c in df_num.columns]
 
                 k_base, k_meth = 5, 5 # Default values
                 if args.evaluation_model == 'knn':
                     # Tuning K for KNN
                     logger.info("Tuning K for Baseline and Method...")
-                    k_base = tune_knn_k(df_num, all_features, target_cols)
-                    k_meth = tune_knn_k(df_num, selected_features, target_cols)
+                    k_base = tune_knn_k(
+                        df_num,
+                        all_features,
+                        target_cols,
+                        cv_gap=cv_gap,
+                        seed=args.seed,
+                    )
+                    k_meth = tune_knn_k(
+                        df_num,
+                        selected_features,
+                        target_cols,
+                        cv_gap=cv_gap,
+                        seed=args.seed,
+                    )
                     logger.info(f"Optimal K values -> Baseline: {k_base}, Method: {k_meth}")
                 else:
                     logger.info(f"Using default architectures for {args.evaluation_model.upper()} (Neutral mode)")

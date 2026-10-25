@@ -17,7 +17,8 @@ from ..logger_setup import setup_framework_logger
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import RFE
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LassoCV, ElasticNetCV
+from sklearn.linear_model import ElasticNet, ElasticNetCV, Lasso, LassoCV
+from sklearn.model_selection import TimeSeriesSplit
 
 # Import base class from the correlation module
 from .correlation_based import BaseFeatureSelector
@@ -109,8 +110,8 @@ class RandomForestSelector(BaseFeatureSelector):
 class LassoSelector(BaseFeatureSelector):
     """Feature selector based on Lasso (L1)."""
     
-    def __init__(self, n_features=None, threshold=None, alpha=1.0, 
-                 max_iter=1000, random_state=42, verbose=False):
+    def __init__(self, n_features=None, threshold=None, alpha=None,
+                 max_iter=1000, random_state=42, cv=None, verbose=False):
         """
         Initializes the selector based on Lasso.
         
@@ -126,6 +127,7 @@ class LassoSelector(BaseFeatureSelector):
         self.alpha = alpha
         self.max_iter = max_iter
         self.random_state = random_state
+        self.cv = cv or TimeSeriesSplit(n_splits=5)
         self.model = None
         self.scaler = StandardScaler()
     
@@ -154,14 +156,24 @@ class LassoSelector(BaseFeatureSelector):
         X_scaled = self.scaler.fit_transform(X_numeric)
         
         # Create and train the model
-        self.model = LassoCV(
-            cv=5, 
-            random_state=self.random_state, 
-            max_iter=self.max_iter
-        )
+        if self.alpha is None:
+            self.model = LassoCV(
+                cv=self.cv,
+                random_state=self.random_state,
+                max_iter=self.max_iter,
+            )
+        else:
+            self.model = Lasso(
+                alpha=self.alpha,
+                random_state=self.random_state,
+                max_iter=self.max_iter,
+            )
         self.model.fit(X_scaled, y)
         if self.verbose:
-            logger.info(f"Alpha optimized by LassoCV: {self.model.alpha_:.6f}")
+            fitted_alpha = (
+                self.model.alpha_ if hasattr(self.model, 'alpha_') else self.model.alpha
+            )
+            logger.info(f"Lasso alpha: {fitted_alpha:.6f}")
         # Extract coefficients (absolute value for importance)
         self.feature_importances_ = pd.Series(
             np.abs(self.model.coef_),
@@ -191,8 +203,8 @@ class LassoSelector(BaseFeatureSelector):
 class ElasticNetSelector(BaseFeatureSelector):
     """Feature selector based on Elastic Net."""
     
-    def __init__(self, n_features=None, threshold=None, alpha=1.0, l1_ratio=0.5,
-                 max_iter=1000, random_state=42, verbose=False):
+    def __init__(self, n_features=None, threshold=None, alpha=None, l1_ratio=0.5,
+                 max_iter=1000, random_state=42, cv=None, verbose=False):
         """
         Initializes the selector based on Elastic Net.
         
@@ -210,6 +222,7 @@ class ElasticNetSelector(BaseFeatureSelector):
         self.l1_ratio = l1_ratio
         self.max_iter = max_iter
         self.random_state = random_state
+        self.cv = cv or TimeSeriesSplit(n_splits=5)
         self.model = None
         self.scaler = StandardScaler()
     
@@ -238,15 +251,26 @@ class ElasticNetSelector(BaseFeatureSelector):
         X_scaled = self.scaler.fit_transform(X_numeric)
         
         # Create and train the model
-        self.model = ElasticNetCV(
-            cv=5, 
-            l1_ratio=[.1, .5, .7, .9, .95, .99, 1], # Test different L1/L2 mixtures
-            random_state=self.random_state, 
-            max_iter=self.max_iter
-        )
+        if self.alpha is None:
+            self.model = ElasticNetCV(
+                cv=self.cv,
+                l1_ratio=[.1, .5, .7, .9, .95, .99, 1],
+                random_state=self.random_state,
+                max_iter=self.max_iter,
+            )
+        else:
+            self.model = ElasticNet(
+                alpha=self.alpha,
+                l1_ratio=self.l1_ratio,
+                random_state=self.random_state,
+                max_iter=self.max_iter,
+            )
         self.model.fit(X_scaled, y)
         if self.verbose:
-            logger.info(f"Alpha optimized by ElasticNetCV: {self.model.alpha_:.6f}")
+            fitted_alpha = (
+                self.model.alpha_ if hasattr(self.model, 'alpha_') else self.model.alpha
+            )
+            logger.info(f"Elastic Net alpha: {fitted_alpha:.6f}")
         # Extract coefficients (absolute value for importance)
         self.feature_importances_ = pd.Series(
             np.abs(self.model.coef_),
@@ -372,19 +396,21 @@ def create_model_selector(method='random_forest', n_features=None, threshold=Non
         return LassoSelector(
             n_features=n_features,
             threshold=threshold,
-            alpha=kwargs.get('alpha', 1.0),
+            alpha=kwargs.get('alpha'),
             max_iter=kwargs.get('max_iter', 1000),
             random_state=kwargs.get('random_state', 42),
+            cv=kwargs.get('cv'),
             verbose=verbose
         )
     elif method == 'elastic_net':
         return ElasticNetSelector(
             n_features=n_features,
             threshold=threshold,
-            alpha=kwargs.get('alpha', 1.0),
+            alpha=kwargs.get('alpha'),
             l1_ratio=kwargs.get('l1_ratio', 0.5),
             max_iter=kwargs.get('max_iter', 1000),
             random_state=kwargs.get('random_state', 42),
+            cv=kwargs.get('cv'),
             verbose=verbose
         )
     elif method == 'rfe':

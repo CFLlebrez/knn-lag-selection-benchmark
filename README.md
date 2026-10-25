@@ -1,77 +1,141 @@
-# $k$-NN-Based Feature Selection Comparative Framework
+# k-NN-Based Feature-Selection Benchmark for Time Series
 
-## Overview
-This framework provides an end-to-end automated pipeline designed for high-dimensional time series forecasting. It integrates dynamic temporal data transformation, sophisticated feature selection architectures, and predictive validation. By bridging the gap between classical statistical selection methods (inspired by the Weka workbench) and modern machine learning workflows, the tool enables researchers to identify optimal feature subsets while mitigating the curse of dimensionality common in lagged time series datasets.
+This repository compares feature-selection methods on lagged time-series data. A
+simple downstream regressor acts as a diagnostic arbiter: the same model family
+is evaluated with the complete eligible feature set and with each selected
+subset.
 
----
+## Forecasting contract
 
-## Core Pipeline Architecture
+For a target named `y`:
 
-The framework operates through three distinct stages to ensure a rigorous experimental flow:
+- `--fh 0` predicts `y` at the forecast origin.
+- `--fh H`, for `H > 0`, is a direct forecast of `y_t+H`.
+- Target lags such as `y_t-1` are valid candidate predictors.
+- The current target `y` and every future target column `y_t+*` are excluded
+  from the candidate predictors.
 
-1. **Temporal Transformation**: Converts univariate or multivariate time series into a supervised learning format by generating lagged observations ($t-n$) based on a user-defined Past History ($ph$) and Forecast Horizon ($fh$).
-2. **Feature Selection (FS)**: Executes a two-phase selection process. First, a **Tuning Phase** optimizes the hyperparameters of the chosen selection method (e.g., regularization strength in Lasso or directionality in Sequential Selection). Second, the **Selection Phase** identifies the most relevant features and generates metadata including importance scores.
-3. **Predictive Evaluation**: Validates the selected subset using an evaluation regressor. The framework automatically tunes the internal hyperparameters (such as the $k$ parameter for KNN) for both the full feature set (baseline) and the reduced subset to provide a fair performance comparison.
+The transformer materializes the intermediate future columns up to `H`, but
+only `y_t+H` is used as the label. Forecast-path and per-horizon subset modes
+are represented in the internal configuration model but are not exposed by the
+current command-line interface.
 
----
+## Experimental protocol
 
-## Technical Specifications and Parameters
+Each run uses a chronological 80/20 development/test hold-out. For horizon
+`H`, the last `H` development origins are purged so their labels cannot cross
+the test boundary. The final test period is not used for feature selection or
+hyperparameter tuning.
 
-### Execution Command
-The framework is executed via `main.py` using the following standardized syntax:
+Within the development period:
+
+1. Selector hyperparameters, when present, are assessed with expanding-window
+   cross-validation. Feature selection is refitted inside every training fold.
+2. Lasso, Elastic Net, and sequential selection use temporal internal
+   cross-validation rather than ordinary future-looking folds.
+3. The downstream model is tuned separately for the full candidate feature set
+   and the selected subset, using the same expanding-window protocol.
+4. The selector is fitted once on all development data.
+5. The baseline and selected-subset models are fitted on development data and
+   evaluated once on the untouched test period.
+
+Every cross-validation boundary uses a gap of `H` rows for a direct forecast at
+horizon `H`. With `--fh 0`, no gap is required.
+
+## Installation
+
+Create a virtual environment and install the pinned dependencies:
+
 ```bash
-python main.py [input_file] [output_dir] --fv [index] --fh [value] --ph [value] --time_col [name] [options]
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt
 ```
-### Primary Arguments
 
-#### Target & Temporal Configuration
-* **`--fv` (int)**: Forecast Variable index specifying the target column in the input dataset.
-* **`--fh` (int)**: Forecast Horizon indicating the number of future temporal steps to predict.
-* **`--ph` (int)**: Past History defining the look-back window size for generating lagged features.
-* **`--time_col` (str)**: Name of the timestamp column to ensure correct chronological alignment during data transformation and temporal splitting.
+On macOS or Linux, use `.venv/bin/python` instead.
 
-#### Feature Selection Module
-* **`--feature_selection` (str)**: Enables the reduction module and specifies the feature selection algorithm to deploy (e.g., `ccf`, `cfs`, `sequential`).
-* **`--fs_n_features` (int)**: Target number of optimal features to retain after the selection phase.
+## Running an experiment
 
-#### Evaluation & Predictive Benchmarking
-* **`--evaluation`**: Explicit flag required to trigger the final predictive benchmarking and validation stage. If omitted, the pipeline halts after exporting selection metadata.
-* **`--evaluation_model` (str)**: Specifies the downstream machine learning architecture used to evaluate the subsets. Options include:
-    * `knn`: K-Nearest Neighbors Regressor (includes automated Bayesian tuning via Optuna for optimal $k$ selection).
-    * `mlp`: Multi-Layer Perceptron Regressor (Neutral architectural mode).
-    * `hgb`: HistGradientBoosting Regressor (Neutral architectural mode).
+```bash
+python main.py INPUT.csv OUTPUT_NAME \
+  --fv TARGET_INDEX \
+  --fh HORIZON \
+  --ph PAST_HISTORY \
+  --time_col TIMESTAMP_COLUMN \
+  --feature_selection \
+  --fs_method pearson \
+  --fs_n_features 10 \
+  --evaluation \
+  --evaluation_model knn \
+  --seed 42 \
+  --run_name example
+```
 
-#### Reproducibility & Tracking
-* **`--seed` (int)**: Sets the global random seed for `numpy`, `random`, and environment variables, guaranteeing deterministic behavior across multi-seed experimental runs.
-* **`--run_name` (str)**: Identifier for the current execution, used to label output directories and isolate master comparative reports.
+Relative input paths are resolved below `input_csv_files/`. Results are written
+below `results/OUTPUT_NAME/`. Absolute paths may also be supplied.
 
----
+Important arguments:
 
-### Feature Selection Taxonomy
-The framework categorizes methods based on their underlying mathematical approach:
+- `--fv`: zero-based target-column index in the original CSV.
+- `--fh`: non-negative direct forecast horizon.
+- `--ph`: non-negative number of lag steps.
+- `--time_col`: timestamp column used to sort observations chronologically.
+- `--feature_selection`: enables feature selection.
+- `--fs_method`: selector name.
+- `--fs_n_features`: positive subset cardinality; required when selection is
+  enabled.
+- `--evaluation`: evaluates the baseline and selected subset; requires feature
+  selection.
+- `--evaluation_model`: `knn`, `mlp`, or `hgb`.
+- `--seed`: seed used by stochastic selectors, evaluators, and Optuna.
 
-| Category | Methods | Description |
-| :--- | :--- | :--- |
-| **Linear / Statistical** | `pearson`, `ccf`, `lasso`, `elastic_net` | Evaluates linear dependencies and employs $L_1/L_2$ regularization. |
-| **Information Theory** | `mutual_info` | Captures non-linear dependencies via entropy-based metrics. |
-| **Wrapper / Iterative** | `rfe`, `sequential` | Uses model-in-the-loop selection (Support Vector Regression or Linear Regression). |
-| **Ensemble** | `random_forest` | Leverages Gini impurity or permutation importance. |
-| **Heuristic (Weka-Inspired)** | `cfs` | Correlation-based Feature Selection that penalizes feature redundancy. |
-| **Statistical Filters** | `sklearn_filter` | Univariate tests including `selectkbest` and `selectpercentile`. |
+Run `python main.py --help` for the complete option list.
 
----
+## Available selectors
 
-### Academic Novelty and Contributions
-The framework introduces several key contributions to the field of automated machine learning (AutoML) for time series:
-* **$k$-NN as a Diagnostic Evaluator**: Unlike workflows that couple feature selection with highly parameterized, black-box forecasting models, this framework leverages a non-parametric $k$-Nearest Neighbors ($k$-NN) regressor as a core diagnostic tool.
-* **Optimized Weka-to-Python Port**: Specifically, the implementation of Correlation-based Feature Selection (CFS) has been optimized for temporal data, utilizing Pearson correlation matrices to maximize feature-to-target relevance while minimizing feature-to-feature redundancy.
-* **Hybrid Hyperparameter Tuning**: Unlike standard selection libraries, this framework performs an internal optimization of the selection method's parameters (e.g., `alpha` for Lasso) before the evaluation of the predictive model.
-* **Dynamic Lag Handling**: The system manages the high dimensionality resulting from large window sizes ($ph$), automatically filtering out non-contributory lags that often introduce noise into forecasting models.
+| Family | Methods |
+| --- | --- |
+| Correlation and information | `pearson`, `ccf`, `mutual_info` |
+| Embedded/model based | `random_forest`, `lasso`, `elastic_net` |
+| Wrapper | `rfe`, `sequential` |
+| scikit-learn filters | `sklearn_filter` |
+| Weka-inspired | `weka_inspired` (CFS) |
 
----
+External Optuna tuning is currently meaningful for Random Forest and mutual
+information. Lasso and Elastic Net choose their regularization through their
+own temporal cross-validation unless a fixed `--alpha` is supplied. Methods
+without a genuine external search space skip the Optuna stage rather than
+reporting a no-op optimization.
 
-### Experimental Outputs
-Upon completion, the framework generates a structured directory containing:
-* **Transformed Dataset**: The processed CSV containing all generated lags.
-* **Selection Metadata**: A JSON file detailing the selected feature indices, execution time, and importance rankings.
-* **Evaluation Report**: A comparative analysis featuring Mean Absolute Error (MAE), Root Mean Squared Error (RMSE), and R-squared ($R^2$) metrics and various times (Selection, Transformation and Inference) for both the baseline and the optimized model (after feature selection using different methods).
+## Outputs
+
+A completed run produces:
+
+- the lagged supervised dataset;
+- feature-importance reports and selection metadata;
+- the exact leakage-safe candidate feature list used by the baseline;
+- the selected feature list and direct target column;
+- MAE, RMSE, R-squared, training time, and inference time for the baseline and
+  selected subset; and
+- a comparative CSV for the chosen downstream model.
+
+The transformed dataset may be cached across runs. Run-specific reports are
+placed in a seed-labelled directory when `--seed` is provided.
+
+## Tests
+
+```bash
+.venv/Scripts/python -B -m unittest discover -s tests -p "test_*.py" -v
+```
+
+The tests cover target alignment, chronological sorting, purged temporal
+splits, selector isolation inside development folds, direct-horizon target
+semantics, leakage-safe baseline construction, parameter propagation, and an
+end-to-end CLI run.
+
+## Published and continuing versions
+
+The conference implementation should be preserved with an immutable Git tag
+and, when appropriate, an archived release linked from the paper. Development
+can continue on branches and later releases without rewriting that historical
+state. Results produced after protocol corrections must be identified as new
+experiments and should not be presented as the unchanged camera-ready results.

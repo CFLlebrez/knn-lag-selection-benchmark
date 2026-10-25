@@ -62,6 +62,7 @@ class PredictiveEvaluator:
         
         selected_features = meta['selected_features']
         target_columns = meta['target_columns']
+        candidate_features = meta.get('candidate_features')
         # Mantenemos la estructura de acceso a meta
         method_name = meta['experiment_info']['method']
         t_selection = meta.get('selection_time_seconds', 0)
@@ -71,11 +72,17 @@ class PredictiveEvaluator:
 
         time_col_lower = time_col.lower() if time_col else None
 
-        # Exclude targets and time column
-        all_features = [
-            c for c in df_train.columns 
-            if c not in target_columns and c.lower() != time_col_lower
-        ]
+        # New metadata records the exact leakage-safe candidate feature space.
+        # Retain the legacy fallback so historical metadata remains readable.
+        if candidate_features is None:
+            all_features = [
+                c for c in df_train.columns
+                if c not in target_columns and c.lower() != time_col_lower
+            ]
+        else:
+            all_features = [
+                c for c in candidate_features if c.lower() != time_col_lower
+            ]
         
         selected_features = [
             c for c in selected_features 

@@ -34,21 +34,23 @@ def transform_time_series(input_file, output_file, fv, fh, ph, time_col=None):
         df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
         df = df.sort_values(time_col).reset_index(drop=True)
 
-    target_index = fv
+    original_columns = df.columns.tolist()
+    if fv < 0 or fv >= len(original_columns):
+        raise ValueError(f"Target index {fv} is out of range.")
+
+    target_name = original_columns[fv]
+    if time_col is not None and target_name == time_col:
+        raise ValueError("The time column cannot be used as the forecast target.")
+
     timestamps = None
 
     # Handle time column separately to avoid using it as a predictive feature
     if time_col is not None and time_col in df.columns:
         timestamps = df[time_col].copy()
         df = df.drop(columns=[time_col])
-        # Re-adjust target index after removing the time column
-        target_index -= 1 
 
     columns = df.columns.tolist()
-    if target_index < 0 or target_index >= len(columns):
-        raise ValueError(f"Target index {fv} is out of range.")
-        
-    target_name = columns[target_index]
+    target_index = columns.index(target_name)
     logger.info(f"Target variable: {target_name} (adjusted index: {target_index})")
 
     transformed_rows = []

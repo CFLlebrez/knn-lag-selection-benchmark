@@ -7,7 +7,7 @@ Focuses on efficient sequential selection (Forward/Backward).
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.linear_model import LinearRegression
 from tqdm import tqdm
 import warnings
@@ -21,14 +21,14 @@ class SequentialFeatureSelector(BaseFeatureSelector):
     """Feature selector based on sequential selection (Forward/Backward)."""
     
     def __init__(self, n_features=None, direction='forward', scoring='neg_mean_squared_error', 
-                 cv=5, estimator=None, verbose=False):
+                 cv=None, estimator=None, verbose=False):
         """
         Initializes the sequential selection selector.
         """
         super().__init__(n_features, None, verbose)
         self.direction = direction
         self.scoring = scoring
-        self.cv = cv
+        self.cv = cv or TimeSeriesSplit(n_splits=5)
         self.estimator = estimator or LinearRegression()
         self.feature_scores_ = None
         self.selection_history_ = None

@@ -377,7 +377,8 @@ class CrossCorrelationSelector(BaseFeatureSelector):
 class MutualInformationSelector(BaseFeatureSelector):
     """Feature selector based on mutual information."""
     
-    def __init__(self, n_features=None, threshold=None, n_neighbors=3, verbose=False):
+    def __init__(self, n_features=None, threshold=None, n_neighbors=3,
+                 random_state=None, verbose=False):
         """
         Initializes the mutual information-based selector.
         
@@ -389,6 +390,7 @@ class MutualInformationSelector(BaseFeatureSelector):
         """
         super().__init__(n_features, threshold, verbose)
         self.n_neighbors = n_neighbors
+        self.random_state = random_state
     
     def fit(self, X, y=None):
         """
@@ -412,7 +414,12 @@ class MutualInformationSelector(BaseFeatureSelector):
         X_numeric = X[numeric_cols]
         
         # Calculate mutual information
-        mi_values = mutual_info_regression(X_numeric, y, n_neighbors=self.n_neighbors)
+        mi_values = mutual_info_regression(
+            X_numeric,
+            y,
+            n_neighbors=self.n_neighbors,
+            random_state=self.random_state,
+        )
         
         # Convert to Series
         self.feature_importances_ = pd.Series(mi_values, index=numeric_cols)
@@ -426,7 +433,9 @@ class MutualInformationSelector(BaseFeatureSelector):
         return self
 
 
-def create_correlation_selector(method='pearson', n_features=None, threshold=None, max_lag=10, absolute=True, verbose=False):
+def create_correlation_selector(method='pearson', n_features=None, threshold=None,
+                                max_lag=10, absolute=True, n_neighbors=3,
+                                random_state=None, verbose=False):
     """
     Creates a correlation-based feature selector according to the specified method.
     
@@ -446,6 +455,12 @@ def create_correlation_selector(method='pearson', n_features=None, threshold=Non
     elif method == 'ccf':
         return CrossCorrelationSelector(n_features, threshold, max_lag, absolute, verbose)
     elif method == 'mutual_info':
-        return MutualInformationSelector(n_features, threshold, verbose=verbose)
+        return MutualInformationSelector(
+            n_features,
+            threshold,
+            n_neighbors=n_neighbors,
+            random_state=random_state,
+            verbose=verbose,
+        )
     else:
         raise ValueError(f"Unknown method: {method}. Valid options: 'pearson', 'ccf', 'mutual_info'")

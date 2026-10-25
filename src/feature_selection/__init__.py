@@ -8,6 +8,10 @@ a unified interface for their use.
 
 import os
 import pandas as pd
+import matplotlib
+
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import json
@@ -38,7 +42,16 @@ def create_feature_selector(method, n_features=None, threshold=None, **kwargs):
     """
     # Correlation-based methods
     if method in ['pearson', 'ccf', 'mutual_info']:
-        return create_correlation_selector(method, n_features, threshold, **kwargs)
+        return create_correlation_selector(
+            method,
+            n_features,
+            threshold,
+            max_lag=kwargs.get('max_lag', 10),
+            absolute=kwargs.get('absolute', True),
+            n_neighbors=kwargs.get('n_neighbors', 3),
+            random_state=kwargs.get('random_state'),
+            verbose=kwargs.get('verbose', False),
+        )
     
     # Model-based methods
     elif method in ['random_forest', 'lasso', 'elastic_net', 'rfe']:
@@ -75,7 +88,12 @@ def create_feature_selector(method, n_features=None, threshold=None, **kwargs):
         raise ValueError(f"Unknown method: {method}")
 
 
-def prepare_data_for_selection(df, target_col, include_target=False):
+def prepare_data_for_selection(
+    df,
+    target_col,
+    include_target=False,
+    selection_target_col=None,
+):
     """
     Prepares data for feature selection by removing the target 
     and its future horizons from the predictors (X).
@@ -89,19 +107,21 @@ def prepare_data_for_selection(df, target_col, include_target=False):
         tuple: (X, y) where X are predictors and y is the target variable.
     """
     data = df.copy()
+    selection_target_col = selection_target_col or target_col
+    if selection_target_col not in data.columns:
+        raise ValueError(
+            f"Selection target '{selection_target_col}' is not present in the dataset"
+        )
 
-    # Identify columns to exclude
-    cols_to_exclude = []
-    if not include_target:
-        cols_to_exclude.append(target_col)
-
-    # Exclude future horizons (target_col_t+N)
+    # All label columns are excluded from the candidate feature space.
     future_cols = [c for c in data.columns if c.startswith(f"{target_col}_t+")]
-    cols_to_exclude.extend(future_cols)
+    cols_to_exclude = list(future_cols)
+    if not include_target or selection_target_col == target_col:
+        cols_to_exclude.append(target_col)
     
     # Build X and y
-    X = data.drop(columns=cols_to_exclude)
-    y = data[target_col].copy()
+    X = data.drop(columns=list(dict.fromkeys(cols_to_exclude)))
+    y = data[selection_target_col].copy()
 
     return X, y
 
@@ -138,7 +158,15 @@ def generate_feature_importance_report(importances, selected_list, output_dir, p
     return report_path, plot_path
 
 
-def save_selection_json(output_path, method_name, selected_features, target_cols, elapsed_time, input_file):
+def save_selection_json(
+    output_path,
+    method_name,
+    selected_features,
+    candidate_features,
+    target_cols,
+    elapsed_time,
+    input_file,
+):
     """
     Generates the metadata JSON file for the evaluator.
     """
@@ -149,6 +177,7 @@ def save_selection_json(output_path, method_name, selected_features, target_cols
             "date": pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
         },
         "selected_features": list(selected_features),
+        "candidate_features": list(candidate_features),
         "target_columns": list(target_cols),
         "selection_time_seconds": round(elapsed_time, 4)
     }
@@ -158,11 +187,12 @@ def save_selection_json(output_path, method_name, selected_features, target_cols
 
 def select_features(input_file, output_dir, target_col, method='random_forest', 
                    n_features=None, threshold=None, time_col=None, include_target=False,
-                   generate_report=True, generate_filtered_csv=True, **kwargs):
+                   generate_report=True, generate_filtered_csv=True,
+                   selection_target_col=None, evaluation_target_cols=None, **kwargs):
     """
     Main function for feature selection with strict n_features control.
     """
-    verbose = kwargs.get('verbose', True)
+    verbose = kwargs.pop('verbose', True)
     os.makedirs(output_dir, exist_ok=True)
     
     # Load data
@@ -173,7 +203,13 @@ def select_features(input_file, output_dir, target_col, method='random_forest',
         df = df.drop(columns=[time_col])
 
     # Prepare X and y
-    X, y = prepare_data_for_selection(df, target_col, include_target=include_target)
+    selection_target_col = selection_target_col or target_col
+    X, y = prepare_data_for_selection(
+        df,
+        target_col,
+        include_target=include_target,
+        selection_target_col=selection_target_col,
+    )
     
     # Create selector
     selector = create_feature_selector(method, n_features, threshold, verbose=verbose, **kwargs)
@@ -238,15 +274,29 @@ def select_features(input_file, output_dir, target_col, method='random_forest',
         # df_filtered.to_csv(filtered_csv_path, index=False)
 
     # 5. Identify target columns (future steps) for the JSON
-    future_targets = [c for c in df.columns if c.startswith(f"{target_col}_t+")]
-    all_targets = [target_col] + future_targets 
+    if evaluation_target_cols is None:
+        all_targets = [selection_target_col]
+    else:
+        all_targets = list(evaluation_target_cols)
+    missing_targets = [column for column in all_targets if column not in df.columns]
+    if missing_targets:
+        raise ValueError(f"Evaluation targets not found: {missing_targets}")
 
     # 6. Save metadata JSON (critical for PredictiveEvaluator)
     json_path = os.path.join(output_dir, f"selection_metadata_{method}.json")
-    save_selection_json(json_path, method_label, selected_features, all_targets, elapsed, input_file)
+    save_selection_json(
+        json_path,
+        method_label,
+        selected_features,
+        X.columns,
+        all_targets,
+        elapsed,
+        input_file,
+    )
     
     return {
         'selected_features': selected_features,
+        'candidate_features': list(X.columns),
         'target_columns': all_targets,
         'json_metadata_path': json_path,
         'n_selected': len(selected_features),
