@@ -5,6 +5,11 @@ simple downstream regressor acts as a diagnostic arbiter: the same model family
 is evaluated with the complete eligible feature set and with each selected
 subset.
 
+The `Milestone` release preserves the implementation associated with the
+CAEPIA 2026 camera-ready paper. The current protocol-corrected release is
+documented in [RELEASE_NOTES.md](RELEASE_NOTES.md); its results must be treated
+as new experiments rather than replacements silently attributed to the paper.
+
 ## Forecasting contract
 
 For a target named `y`:
@@ -139,3 +144,10 @@ and, when appropriate, an archived release linked from the paper. Development
 can continue on branches and later releases without rewriting that historical
 state. Results produced after protocol corrections must be identified as new
 experiments and should not be presented as the unchanged camera-ready results.
+
+## Citation
+
+Use the metadata in [CITATION.cff](CITATION.cff). The preferred citation is the
+CAEPIA 2026 paper, "A k-NN-Based Benchmark for Lag Selection in Time Series
+Forecasting," by Carlos Fernández-Llebrez Acedo, Pablo Moreno Moreu, Pablo
+Reina-Jiménez, and José C. Riquelme.

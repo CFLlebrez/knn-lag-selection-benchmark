@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite the CAEPIA 2026 paper and the
+  corresponding software release.
+title: k-NN-Based Feature-Selection Benchmark for Time Series
+type: software
+authors:
+  - family-names: Fernández-Llebrez Acedo
+    given-names: Carlos
+  - family-names: Moreno Moreu
+    given-names: Pablo
+  - family-names: Reina-Jiménez
+    given-names: Pablo
+  - family-names: Riquelme
+    given-names: José C.
+version: 0.2.0
+date-released: 2026-10-25
+repository-code: https://github.com/CFLlebrez/knn-lag-selection-benchmark
+preferred-citation:
+  type: conference-paper
+  title: A k-NN-Based Benchmark for Lag Selection in Time Series Forecasting
+  authors:
+    - family-names: Fernández-Llebrez Acedo
+      given-names: Carlos
+    - family-names: Moreno Moreu
+      given-names: Pablo
+    - family-names: Reina-Jiménez
+      given-names: Pablo
+    - family-names: Riquelme
+      given-names: José C.
+  year: 2026
