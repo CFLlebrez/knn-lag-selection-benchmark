@@ -151,3 +151,9 @@ Use the metadata in [CITATION.cff](CITATION.cff). The preferred citation is the
 CAEPIA 2026 paper, "A k-NN-Based Benchmark for Lag Selection in Time Series
 Forecasting," by Carlos Fernández-Llebrez Acedo, Pablo Moreno Moreu, Pablo
 Reina-Jiménez, and José C. Riquelme.
+
+## License
+
+The software is released under the [Apache License 2.0](LICENSE). This
+permissive license allows research and commercial reuse while preserving
+attribution and providing an explicit patent grant.
